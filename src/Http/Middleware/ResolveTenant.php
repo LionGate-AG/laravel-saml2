@@ -48,7 +48,7 @@ class ResolveTenant
      */
     public function handle($request, \Closure $next)
     {
-        if(!$tenant = $this->resolveTenant($request)) {
+        if (!$tenant = $this->resolveTenant($request)) {
             throw new NotFoundHttpException();
         }
 
@@ -78,9 +78,9 @@ class ResolveTenant
      */
     protected function resolveTenant($request)
     {
-        if(!$uuid = $request->route('uuid')) {
+        if (!$uuidOrKey = $request->route('uuid')) {
             if (config('saml2.debug')) {
-                Log::debug('[Saml2] Tenant UUID is not present in the URL so cannot be resolved', [
+                Log::debug('[Saml2] Tenant UUID or key is not present in the URL so cannot be resolved', [
                     'url' => $request->fullUrl()
                 ]);
             }
@@ -88,21 +88,38 @@ class ResolveTenant
             return null;
         }
 
-        if(!$tenant = $this->tenants->findByUUID($uuid)) {
+        //Technically, we may get multiple tenants (aka. a collection) when querying by any identifier
+        $tenant = $this->tenants->findByAnyIdentifier($uuidOrKey, true);
+
+        //if(!$tenant = $this->tenants->findByUUID($uuid)) {
+        if ($tenant->count() === 0) {
             if (config('saml2.debug')) {
                 Log::debug('[Saml2] Tenant doesn\'t exist', [
-                    'uuid' => $uuid
+                    'uuidOrKey' => $uuidOrKey
                 ]);
             }
 
             return null;
         }
 
-        if($tenant->trashed()) {
+        if ($tenant->count() > 1) {
             if (config('saml2.debug')) {
-                Log::debug('[Saml2] Tenant #' . $tenant->id. ' resolved but marked as deleted', [
+                Log::debug('[Saml2] Tenant is not unique', [
+                    'uuidOrKey' => $uuidOrKey
+                ]);
+            }
+
+            return null;
+        }
+
+        //We definitely found exactly one tenant once we get here
+        $tenant = $tenant->first();
+
+        if ($tenant->trashed()) {
+            if (config('saml2.debug')) {
+                Log::debug('[Saml2] Tenant #' . $tenant->id . ' resolved but marked as deleted', [
                     'id' => $tenant->id,
-                    'uuid' => $uuid,
+                    'uuidOrKey' => $uuidOrKey,
                     'deleted_at' => $tenant->deleted_at->toDateTimeString()
                 ]);
             }

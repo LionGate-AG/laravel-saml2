@@ -187,7 +187,7 @@ class Auth
     public function getMetadata()
     {
         $settings = $this->base->getSettings();
-        $metadata = $settings->getSPMetadata();
+        $metadata = $settings->getSPMetadata(false, config('saml2.sp.validUntil'));
         $errors = $settings->validateMetadata($metadata);
 
         if (!count($errors)) {

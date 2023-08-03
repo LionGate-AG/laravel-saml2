@@ -22,6 +22,7 @@ class CreateTenant extends \Illuminate\Console\Command
      */
     protected $signature = 'saml2:create-tenant
                             { --k|key= : A tenant custom key }
+                            { --u|upsert : Update an already existing tenant }
                             { --entityId= : IdP Issuer URL }
                             { --loginUrl= : IdP Sign on URL }
                             { --logoutUrl= : IdP Logout URL }
@@ -35,7 +36,7 @@ class CreateTenant extends \Illuminate\Console\Command
      *
      * @var string
      */
-    protected $description = 'Create a Tenant entity (relying identity provider)';
+    protected $description = 'Create a Tenant entity (relying identity provider) or perform a full update (upsert)';
 
     /**
      * @var TenantRepository
@@ -84,35 +85,59 @@ class CreateTenant extends \Illuminate\Console\Command
         $key = $this->option('key');
         $metadata = ConsoleHelper::stringToArray($this->option('metadata'));
 
-        if($key && ($tenant = $this->tenants->findByKey($key))) {
-            $this->renderTenants($tenant, 'Already found tenant(s) using this key');
-            $this->error(
-                'Cannot create a tenant because the key is already being associated with other tenants.'
-                    . PHP_EOL . 'Firstly, delete tenant(s) or try to create with another with another key.'
-            );
+        $upsert = $this->option('upsert');
 
+        if (!$key && !$upsert) {
+            $this->error('Cannot upsert a tenant when no unique key was provided.');
             return;
         }
 
-        $class = config('saml2.tenantModel', Tenant::class);
-        $tenant = new $class([
-            'key' => $key,
-            'uuid' => \Ramsey\Uuid\Uuid::uuid4(),
-            'idp_entity_id' => $entityId,
-            'idp_login_url' => $loginUrl,
-            'idp_logout_url' => $logoutUrl,
-            'idp_x509_cert' => $x509cert,
-            'relay_state_url' => $this->option('relayStateUrl'),
-            'name_id_format' => $this->resolveNameIdFormat(),
-            'metadata' => $metadata,
-        ]);
+        if ($key && ($tenant = $this->tenants->findByKey($key))) {
+            if (!$upsert) {
+                //Refuse to create duplicate tenant unless --upsert was provided
+                $this->renderTenants($tenant, 'Already found tenant(s) using this key');
+                $this->error(
+                    'Cannot create a tenant because the key is already being associated with other tenants.'
+                        . PHP_EOL . 'Firstly, delete tenant(s) or try to create with another with another key.'
+                );
 
-        if(!$tenant->save()) {
+                return;
+            } else {
+                //If --upsert was provided, update the existing tenant
+                //Note: This will keep the exiting uuid
+                $tenant->fill([
+                    'key' => $key,
+                    'idp_entity_id' => $entityId,
+                    'idp_login_url' => $loginUrl,
+                    'idp_logout_url' => $logoutUrl,
+                    'idp_x509_cert' => $x509cert,
+                    'relay_state_url' => $this->option('relayStateUrl'),
+                    'name_id_format' => $this->resolveNameIdFormat(),
+                    'metadata' => $metadata,
+                ]);
+            }
+        } else {
+
+            $class = config('saml2.tenantModel', Tenant::class);
+            $tenant = new $class([
+                'key' => $key,
+                'uuid' => \Ramsey\Uuid\Uuid::uuid4(),
+                'idp_entity_id' => $entityId,
+                'idp_login_url' => $loginUrl,
+                'idp_logout_url' => $logoutUrl,
+                'idp_x509_cert' => $x509cert,
+                'relay_state_url' => $this->option('relayStateUrl'),
+                'name_id_format' => $this->resolveNameIdFormat(),
+                'metadata' => $metadata,
+            ]);
+        }
+
+        if (!$tenant->save()) {
             $this->error('Tenant cannot be saved.');
             return;
         }
 
-        $this->info("The tenant #{$tenant->id} ({$tenant->uuid}) was successfully created.");
+        $this->info("The tenant #{$tenant->id} ({$tenant->uuid}) was successfully created or updated.");
 
         $this->renderTenantCredentials($tenant);
 
